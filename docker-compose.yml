@@ -11,6 +11,24 @@ version: '3.8'
 
 services:
 
+# Service API Gateway 
+  gateway:
+    build: ./services/gateway
+    ports:
+      - "3000:3000"
+    networks:
+      - devshop
+    depends_on:
+      catalogue:
+        condition: service_healthy
+      panier:
+        condition: service_healthy
+      commandes:
+        condition: service_healthy
+      notifications:
+        condition: service_healthy
+    restart: unless-stopped
+    
   # ── Front (fourni, ne pas modifier) ──────────────────────────────
   front:
     build: ./front
@@ -19,6 +37,7 @@ services:
     networks:
       - devshop
     restart: unless-stopped
+    
   # ── Service Catalogue ─────────────────────────────────────────────
   catalogue:
     build: ./services/catalogue
