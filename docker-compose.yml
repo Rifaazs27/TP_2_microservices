@@ -1,0 +1,99 @@
+version: '3.8'
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  TP DevOps M2 — stack e-commerce                                ║
+# ║  Le front est fourni. Votre mission :                           ║
+# ║  1. Compléter ce docker-compose (health checks, depends_on…)   ║
+# ║  2. Dockeriser chaque service (multi-stage build)               ║
+# ║  3. Instrumenter les services avec prom-client                  ║
+# ║  4. Ajouter Prometheus + Grafana + Alertmanager                 ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+services:
+
+  # ── Front (fourni, ne pas modifier) ──────────────────────────────
+  front:
+    build: ./front
+    ports:
+      - "8080:80"
+    networks:
+      - devshop
+
+  # ── Service Catalogue ─────────────────────────────────────────────
+  catalogue:
+    build: ./services/catalogue
+    ports:
+      - "3001:3001"
+    networks:
+      - devshop
+    # TODO : ajouter healthcheck
+    # healthcheck:
+    #   test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+    #   interval: 10s
+    #   timeout: 3s
+    #   retries: 3
+
+  # ── Service Panier ────────────────────────────────────────────────
+  panier:
+    build: ./services/panier
+    ports:
+      - "3002:3002"
+    networks:
+      - devshop
+    # TODO : healthcheck + depends_on catalogue
+
+  # ── Service Commandes ─────────────────────────────────────────────
+  commandes:
+    build: ./services/commandes
+    ports:
+      - "3003:3003"
+    networks:
+      - devshop
+    # TODO : healthcheck + depends_on panier
+
+  # ── Service Notifications ─────────────────────────────────────────
+  notifications:
+    build: ./services/notifications
+    ports:
+      - "3004:3004"
+    networks:
+      - devshop
+    # TODO : healthcheck
+
+  # ── Prometheus ────────────────────────────────────────────────────
+  # TODO : décommenter et configurer
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   volumes:
+  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+  #   ports:
+  #     - "9090:9090"
+  #   networks:
+  #     - devshop
+
+  # ── Grafana ───────────────────────────────────────────────────────
+  # TODO : décommenter et configurer
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - GF_AUTH_ANONYMOUS_ENABLED=true
+  #     - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+  #   networks:
+  #     - devshop
+
+  # ── Alertmanager ──────────────────────────────────────────────────
+  # TODO : décommenter et configurer
+  # alertmanager:
+  #   image: prom/alertmanager:latest
+  #   volumes:
+  #     - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+  #   ports:
+  #     - "9093:9093"
+  #   networks:
+  #     - devshop
+
+networks:
+  devshop:
+    driver: bridge
