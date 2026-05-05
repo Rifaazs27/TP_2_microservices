@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'devshop-services'
+    static_configs:
+      - targets:
+          - 'catalogue:3001'
+          - 'panier:3002'
+          - 'commandes:3003'
+          - 'notifications:3004'
