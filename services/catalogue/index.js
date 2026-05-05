@@ -2,14 +2,14 @@ const express = require('express');
 const client = require('prom-client');
 const app = express();
 
-// --- Configuration Prometheus ---
+// --- CONFIGURATION PROMETHEUS ---
 const register = new client.Registry();
 client.collectDefaultMetrics({ register });
 
 const httpRequestCounter = new client.Counter({
   name: 'http_requests_total',
   help: 'Total HTTP requests',
-  labelNames: ['method', 'route', 'status_code', 'service'], // Ajout du label service
+  labelNames: ['method', 'route', 'status_code', 'service'],
 });
 
 const httpRequestDuration = new client.Histogram({
@@ -22,7 +22,7 @@ const httpRequestDuration = new client.Histogram({
 register.registerMetric(httpRequestCounter);
 register.registerMetric(httpRequestDuration);
 
-// --- Middlewares ---
+// --- MIDDLEWARES ---
 app.use(express.json());
 
 app.use((req, res, next) => {
@@ -38,12 +38,13 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS'); // Ajout de PATCH
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
+// --- DONNÉES PRODUITS (PHASE 2) ---
 const products = [
   { id: 1, name: "Laptop Pro 15", price: 1299.99, stock: 10, reservedStock: 0, category: "electronics", description: "Ordinateur portable haute performance", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
   { id: 2, name: "Clavier Mécanique", price: 89.99, stock: 50, reservedStock: 0, category: "accessories", description: "Clavier mécanique RGB", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
@@ -53,6 +54,7 @@ const products = [
   { id: 6, name: "Hub USB-C 7 ports", price: 49.99, stock: 30, reservedStock: 0, category: "accessories", description: "Hub USB-C multiport", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
 ];
 
+// --- ROUTES ---
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'catalogue' }));
 
@@ -61,23 +63,27 @@ app.get('/metrics', async (req, res) => {
   res.end(await register.metrics());
 });
 
-app.get('/products', (req, res) => res.json(products));
+// Route liste complète
+app.get(['/products', '/'], (req, res) => res.json(products));
 
-app.get('/products/:id', (req, res) => {
+// Route détails produit (Gère /products/1 ET /1)
+app.get(['/products/:id', '/:id'], (req, res) => {
   const p = products.find(p => p.id === parseInt(req.params.id));
   if (!p) return res.status(404).json({ error: 'Produit introuvable' });
   res.json(p);
 });
 
-app.post('/products/:id/reserve', (req, res) => {
+// ROUTE RÉSERVATION (PHASE 2) - Gère /products/:id/reserve ET /:id/reserve
+app.post(['/products/:id/reserve', '/:id/reserve'], (req, res) => {
   const { quantity } = req.body;
   const product = products.find(p => p.id === parseInt(req.params.id));
 
   if (!product) return res.status(404).json({ error: 'Produit introuvable' });
   if (typeof quantity !== 'number' || quantity <= 0) return res.status(400).json({ error: 'Quantité invalide' });
 
-  // Règle métier : Vérifier que stock - reservedStock >= N
+  // Règle métier : Vérifier que stock réel - stock déjà réservé >= quantité demandée
   const availableStock = product.stock - product.reservedStock;
+  
   if (availableStock < quantity) {
     return res.status(409).json({ 
       message: `Insufficient stock: requested ${quantity}, available ${availableStock}` 
@@ -89,7 +95,8 @@ app.post('/products/:id/reserve', (req, res) => {
   res.json(product);
 });
 
-app.patch('/products/:id', (req, res) => {
+// MISE À JOUR PRODUIT (PATCH)
+app.patch(['/products/:id', '/:id'], (req, res) => {
   const product = products.find(p => p.id === parseInt(req.params.id));
   if (!product) return res.status(404).json({ error: 'Produit introuvable' });
 
@@ -104,4 +111,5 @@ app.patch('/products/:id', (req, res) => {
   res.json(product);
 });
 
-app.listen(3001, () => console.log('📦 [catalogue] running on http://localhost:3001'));
+const PORT = 3001;
+app.listen(PORT, () => console.log(` [catalogue] running on http://localhost:${PORT}`));
