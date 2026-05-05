@@ -20,7 +20,7 @@ const PORT = 3000;
 // --- MIDDLEWARES ---
 app.use(metricsMiddleware);
 
-// Middleware de Logging JSON
+// Middleware de Logging JSON (Phase 3.3)
 app.use((req, res, next) => {
   if (req.path === '/health' || req.path === '/metrics') return next();
   const start = Date.now();
@@ -48,7 +48,7 @@ app.use(rateLimiter);
 
 // --- ROUTES ---
 
-// Health check agrégé avec Retry (Phase 4.2)
+// Health check agrégé avec Retry et Backoff (Phase 4.2)
 app.get('/health', async (req, res) => {
   const start = Date.now();
   const results = {};
@@ -56,7 +56,6 @@ app.get('/health', async (req, res) => {
   await Promise.all(Object.entries(SERVICES).map(async ([name, url]) => {
     const sStart = Date.now();
     try {
-      // Utilisation du withRetry pour le check de santé des services
       await withRetry(async () => {
         const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
         if (!response.ok) throw new Error(`Status ${response.status}`);
@@ -90,11 +89,12 @@ app.get('/metrics', (req, res) => {
   res.send(generateMetrics('gateway'));
 });
 
-// Proxying
-app.use('/products', (req, res) => proxy.web(req, res, { target: SERVICES.catalogue }));
-app.use('/cart', (req, res) => proxy.web(req, res, { target: SERVICES.panier }));
-app.use('/orders', (req, res) => proxy.web(req, res, { target: SERVICES.commandes }));
-app.use('/notifications', (req, res) => proxy.web(req, res, { target: SERVICES.notifications }));
+// --- PROXYING (Phase 4 Corrigée) ---
+// On utilise .all() et l'astérisque pour s'assurer que le chemin complet est transmis au service
+app.all('/products*', (req, res) => proxy.web(req, res, { target: SERVICES.catalogue }));
+app.all('/cart*', (req, res) => proxy.web(req, res, { target: SERVICES.panier }));
+app.all('/orders*', (req, res) => proxy.web(req, res, { target: SERVICES.commandes }));
+app.all('/notifications*', (req, res) => proxy.web(req, res, { target: SERVICES.notifications }));
 
 proxy.on('error', (err, req, res) => {
   logger.error('Proxy error', { error: err.message, url: req.url });
@@ -102,8 +102,8 @@ proxy.on('error', (err, req, res) => {
 });
 
 // --- GESTION GLOBALE DES ERREURS (Phase 4.3) ---
+// Ces middlewares doivent être les DERNIERS déclarés
 
-// Middleware 404 — route introuvable
 app.use((req, res) => {
   logger.warn('Route not found', { method: req.method, path: req.path });
   res.status(404).json({
@@ -112,7 +112,6 @@ app.use((req, res) => {
   });
 });
 
-// Middleware 500 — erreur non gérée
 app.use((err, req, res, next) => {
   logger.error('Unhandled error', {
     error: err.message,
