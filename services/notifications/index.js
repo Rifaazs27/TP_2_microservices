@@ -96,10 +96,11 @@ app.post('/notify', (req, res) => {
   res.status(201).json(notif);
 });
 
-app.get('/notifications', (req, res) => {
+app.get(['/notifications', '/'], (req, res) => {
   let filtered = [...notifications];
   if (req.query.userId) filtered = filtered.filter(n => n.userId === req.query.userId);
   if (req.query.type) filtered = filtered.filter(n => n.type === req.query.type);
+  
   res.json(filtered.slice(0, parseInt(req.query.limit) || 50));
 });
 
