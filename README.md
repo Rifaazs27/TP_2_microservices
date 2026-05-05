@@ -50,7 +50,7 @@ docker compose down -v
 
 ## 5. Tester chaque endpoint
 
-### 📦 Catalogue — Liste des produits
+###  Catalogue — Liste des produits
 
 ```bash
 curl -X GET http://localhost:3000/products
@@ -62,7 +62,7 @@ Le catalogue retourne la liste complète des produits.
 
 ---
 
-### 🛒 Panier — Ajouter un item
+###  Panier — Ajouter un item
 
 ```bash
 curl -X POST http://localhost:3000/cart/user123/items \
@@ -74,7 +74,7 @@ curl -X POST http://localhost:3000/cart/user123/items \
 Le panier a été créé avec succès et le itemCount reflète la quantité ajoutée.
 ---
 
-### 📑 Commandes — Créer une commande
+###  Commandes — Créer une commande
 
 ```bash
 curl -X POST http://localhost:3000/orders \
@@ -89,7 +89,7 @@ curl -X POST http://localhost:3000/orders \
 
 Le service Commande a calculé le total correct ($2599.98$) et a initialisé le statut à pending.
 
-### 📑 Notifications 
+###  Notifications 
 
 ```bash
 curl -X GET http://localhost:3000/notifications?userId=user123
@@ -97,6 +97,40 @@ curl -X GET http://localhost:3000/notifications?userId=user123
 **Réponse :**
 
 La notification a été générée instantanément suite à la commande. On remarque que l'orderId dans la notification correspond exactement à l'ID de la commande créée à l'étape précédente, validant la communication inter-services.
+
+###  Statistiques des Commandes ( Bonus )
+
+```bash
+curl -X GET http://localhost:3000/orders/stats
+```
+
+**Réponse :**
+
+Le totalRevenue doit correspondre à la somme des commandes non annulées.
+
+###  Réservation de Stock ( Bonus )
+
+```bash
+curl -X POST http://localhost:3001/products/1/reserve \
+     -H "Content-Type: application/json" \
+     -d '{"quantity": 100}'
+```
+
+**Réponse :**
+
+Le Code HTTP doit renvoyer 409 Conflict indiquant qu'il ya pas assez de stock.
+
+---
+
+###  Statistiques de Notifications ( Bonus )
+
+```bash
+curl -X GET http://localhost:3000/notifications/stats
+```
+
+**Réponse :**
+
+last1h doit être supérieur à 0 si tu viens de passer une commande.
 
 ---
 
