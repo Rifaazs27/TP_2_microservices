@@ -1,5 +1,43 @@
 const express = require('express');
+const client = require('prom-client');
 const app = express();
+
+// --- CONFIGURATION PROMETHEUS ---
+const register = new client.Registry();
+client.collectDefaultMetrics({ register });
+
+const httpRequestCounter = new client.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'route', 'status_code'],
+});
+const httpRequestDuration = new client.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests',
+  labelNames: ['method', 'route', 'status_code'],
+});
+const ordersGauge = new client.Gauge({
+  name: 'devshop_orders_total_count',
+  help: 'Nombre total de commandes en mémoire',
+});
+
+register.registerMetric(httpRequestCounter);
+register.registerMetric(httpRequestDuration);
+register.registerMetric(ordersGauge);
+
+app.use(express.json());
+
+// Middleware instrumentation
+app.use((req, res, next) => {
+  const end = httpRequestDuration.startTimer();
+  res.on('finish', () => {
+    const route = req.route ? req.route.path : req.path;
+    httpRequestCounter.labels(req.method, route, res.statusCode).inc();
+    end({ method: req.method, route, status_code: res.statusCode });
+  });
+  next();
+});
+
 app.use(express.json());
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -11,10 +49,6 @@ app.use((req, res, next) => {
 
 let orders = [];
 let nextId = 1;
-
-// ── TODO ETUDIANT : instrumenter avec prom-client ──────────────────────────
-// const client = require('prom-client');
-// Idées : counter commandes créées, histogram montant des commandes...
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'commandes', total: orders.length }));
 
@@ -36,7 +70,9 @@ app.post('/orders', (req, res) => {
     createdAt: new Date().toISOString(),
   };
   orders.push(order);
-
+  
+  ordersGauge.set(orders.length);
+  
   // Appel async au service notifications (fire & forget)
   fetch('http://notifications:3004/notify', {
     method: 'POST',
@@ -47,7 +83,10 @@ app.post('/orders', (req, res) => {
   res.status(201).json(order);
 });
 
-// TODO ETUDIANT : exposer GET /metrics
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
 
 const PORT = 3003;
 app.listen(PORT, () => console.log(`[commandes] http://localhost:${PORT}`));
