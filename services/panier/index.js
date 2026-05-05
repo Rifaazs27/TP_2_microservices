@@ -20,7 +20,6 @@ app.use((req, res, next) => {
   next();
 });
 
-
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
@@ -43,43 +42,36 @@ const getOrCreateCart = (userId) => {
   return carts[userId];
 };
 
+
 app.get('/health', (req, res) => {
   const used_mb = Math.round(process.memoryUsage().rss / 1024 / 1024 * 100) / 100;
-  const threshold_mb = 400;
-  const status = used_mb > threshold_mb ? "degraded" : "ok";
-
+  const status = used_mb > 400 ? "degraded" : "ok";
   res.status(status === "ok" ? 200 : 503).json({
-    status,
-    service: "panier",
-    version: "1.0.0",
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    checks: {
-      memory: { status, used_mb, threshold_mb },
-      dataStore: { status: "ok", records: Object.keys(carts).length }
-    }
+    status, service: "panier", uptime: process.uptime(),
+    checks: { memory: { used_mb }, dataStore: { records: Object.keys(carts).length } }
   });
 });
 
 app.get('/metrics', (req, res) => {
   res.set('Content-Type', 'text/plain; version=0.0.4');
-  res.send(generateMetrics('panier', {
-    carts_total: Object.keys(carts).length
-  }));
+  res.send(generateMetrics('panier', { carts_total: Object.keys(carts).length }));
 });
 
+
+// GET Cart
 app.get(['/cart/:userId', '/:userId'], (req, res) => {
   const cart = getOrCreateCart(req.params.userId);
   const total = cart.items.reduce((acc, i) => acc + (i.quantity * i.unitPrice), 0);
-  res.json({ ...cart, total: parseFloat(total.toFixed(2)) });
+  const itemCount = cart.items.reduce((acc, i) => acc + i.quantity, 0); // Ajout itemCount
+  res.json({ ...cart, total: parseFloat(total.toFixed(2)), itemCount });
 });
 
 app.post(['/cart/:userId/items', '/:userId/items'], (req, res) => {
   const { productId, productName, quantity, unitPrice } = req.body;
   
-  if (!productId || quantity === undefined) {
-    logger.warn('Validation failed', { errors: ["productId and quantity are required"] });
-    return res.status(400).json({ error: "Validation failed", details: ["productId et quantity requis"] });
+  if (!productId || quantity === undefined || quantity <= 0) {
+    logger.warn('Validation failed', { userId: req.params.userId, quantity });
+    return res.status(400).json({ error: "Validation failed", details: ["Quantité invalide ou manquante"] });
   }
 
   const cart = getOrCreateCart(req.params.userId);
@@ -87,21 +79,22 @@ app.post(['/cart/:userId/items', '/:userId/items'], (req, res) => {
   
   if (existingItem) {
     existingItem.quantity += quantity;
-    logger.info('Resource updated', { userId: cart.userId, productId, action: 'increment_quantity' });
+    logger.info('Resource updated', { userId: cart.userId, productId, action: 'increment' });
   } else {
-    const newItem = { 
+    cart.items.push({ 
       itemId: Date.now().toString(), 
       productId, 
       productName: productName || "Produit inconnu", 
       quantity, 
       unitPrice: unitPrice || 0 
-    };
-    cart.items.push(newItem);
-    logger.info('Resource created', { userId: cart.userId, itemId: newItem.itemId });
+    });
+    logger.info('Resource created', { userId: cart.userId, productId });
   }
 
   cart.updatedAt = new Date().toISOString();
-  res.status(201).json(cart);
+  
+  const itemCount = cart.items.reduce((acc, i) => acc + i.quantity, 0);
+  res.status(201).json({ ...cart, itemCount });
 });
 
 app.get(['/cart/:userId/summary', '/:userId/summary'], (req, res) => {
@@ -119,50 +112,23 @@ app.get(['/cart/:userId/summary', '/:userId/summary'], (req, res) => {
 });
 
 app.delete(['/cart/:userId', '/:userId'], (req, res) => {
-  carts[req.params.userId] = { 
-    userId: req.params.userId, 
-    items: [], 
-    updatedAt: new Date().toISOString() 
-  };
-  logger.info('Resource deleted', { userId: req.params.userId, action: 'clear_cart' });
+  carts[req.params.userId] = { userId: req.params.userId, items: [], updatedAt: new Date().toISOString() };
   res.json(carts[req.params.userId]);
 });
 
 
 app.use((req, res) => {
-  logger.warn('Route not found', { method: req.method, path: req.path });
-  res.status(404).json({
-    error: 'Not Found',
-    message: `La route ${req.method} ${req.path} n'existe pas`,
-  });
+  res.status(404).json({ error: 'Not Found' });
 });
 
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error', {
-    error: err.message,
-    path: req.path,
-    method: req.method,
-  });
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: 'Une erreur inattendue s\'est produite',
-    requestId: Date.now().toString(),
-  });
+  logger.error('Unhandled error', { error: err.message });
+  res.status(500).json({ error: 'Internal Server Error' });
 });
 
 const PORT = 3002;
-const server = app.listen(PORT, () => {
-  logger.info('Service started', { port: PORT });
-});
+const server = app.listen(PORT, () => logger.info('Service started', { port: PORT }));
 
 process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully...');
-  server.close(() => {
-    logger.info('Server closed — all connections drained');
-    process.exit(0);
-  });
-  setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
-    process.exit(1);
-  }, 10000);
+  server.close(() => process.exit(0));
 });
