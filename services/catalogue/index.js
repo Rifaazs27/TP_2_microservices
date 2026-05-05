@@ -7,6 +7,7 @@ const app = express();
 app.use(express.json());
 app.use(metricsMiddleware);
 
+// Middleware de Logging JSON (Phase 3)
 app.use((req, res, next) => {
   if (req.path === '/health' || req.path === '/metrics') return next();
   const start = Date.now();
@@ -21,6 +22,7 @@ app.use((req, res, next) => {
   next();
 });
 
+// CORS
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
@@ -38,6 +40,8 @@ const products = [
   { id: 5, name: "Webcam HD", price: 79.99, stock: 0, reservedStock: 0, category: "electronics", description: "Webcam 1080p", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
   { id: 6, name: "Hub USB-C 7 ports", price: 49.99, stock: 30, reservedStock: 0, category: "accessories", description: "Hub USB-C multiport", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
 ];
+
+// --- ROUTES DE SANTÉ ET MÉTRIQUES ---
 
 app.get('/health', (req, res) => {
   const used_mb = Math.round(process.memoryUsage().rss / 1024 / 1024 * 100) / 100;
@@ -62,9 +66,35 @@ app.get('/metrics', (req, res) => {
   res.send(generateMetrics('catalogue', { records_total: products.length }));
 });
 
+// --- ROUTES PRODUITS ---
 
+// GET All Products
 app.get(['/products', '/'], (req, res) => res.json(products));
 
+// POST Create Product (AJOUTÉ POUR LA PHASE 4.1)
+app.post(['/products', '/'], (req, res) => {
+  const errors = validateProduct(req.body);
+
+  if (errors.length > 0) {
+    logger.warn('Validation failed for new product', { errors });
+    return res.status(400).json({ error: "Validation failed", details: errors });
+  }
+
+  const newProduct = {
+    id: products.length + 1,
+    ...req.body,
+    stock: req.body.stock || 0,
+    reservedStock: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  products.push(newProduct);
+  logger.info('Resource created', { id: newProduct.id, name: newProduct.name });
+  res.status(201).json(newProduct);
+});
+
+// GET Product by ID
 app.get(['/products/:id', '/:id'], (req, res) => {
   const p = products.find(p => p.id === parseInt(req.params.id));
   if (!p) {
@@ -74,6 +104,7 @@ app.get(['/products/:id', '/:id'], (req, res) => {
   res.json(p);
 });
 
+// POST Reserve Product
 app.post(['/products/:id/reserve', '/:id/reserve'], (req, res) => {
   const { quantity } = req.body;
   const product = products.find(p => p.id === parseInt(req.params.id));
@@ -102,6 +133,7 @@ app.post(['/products/:id/reserve', '/:id/reserve'], (req, res) => {
   res.json(product);
 });
 
+// PATCH Update Product
 app.patch(['/products/:id', '/:id'], (req, res) => {
   const product = products.find(p => p.id === parseInt(req.params.id));
   if (!product) return res.status(404).json({ error: 'Produit introuvable' });
@@ -119,6 +151,7 @@ app.patch(['/products/:id', '/:id'], (req, res) => {
   res.json(product);
 });
 
+// --- GESTION DES ERREURS (Phase 4.3) ---
 
 app.use((req, res) => {
   logger.warn('Route not found', { method: req.method, path: req.path });
@@ -141,6 +174,7 @@ app.use((err, req, res, next) => {
   });
 });
 
+// --- SERVEUR & SHUTDOWN (Phase 4.4) ---
 
 const PORT = 3001;
 const server = app.listen(PORT, () => {
