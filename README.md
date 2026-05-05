@@ -93,6 +93,12 @@ curl -X POST http://localhost:3000/orders \
 curl http://localhost:3000/health
 ```
 
+### ❤️ Santé — Metrics
+
+```bash
+curl http://localhost:3000/metrics
+```
+
 ---
 
 ## 6. Difficultés rencontrées
