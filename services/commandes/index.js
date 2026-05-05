@@ -123,23 +123,29 @@ app.get(['/orders/:id', '/:id'], (req, res) => {
 
 app.patch(['/orders/:id/status', '/:id/status'], (req, res) => {
   const order = orders.find(o => o.id === req.params.id);
-  if (!order) return res.status(404).json({ error: 'Not Found' });
+  if (!order) {
+    return res.status(404).json({ error: 'Not Found' });
+  }
 
-  const { status } = req.body;
+  const newStatus = req.body.status ? req.body.status.toString().trim().toLowerCase() : null;
+  const currentStatus = order.status.toString().trim().toLowerCase();
   const allowed = ['pending', 'confirmed', 'shipped', 'cancelled'];
-  
-  if (!status || !allowed.includes(status) || status === order.status) {
-    logger.warn('Invalid status update', { id: order.id, attempted: status });
+  if (!newStatus || !allowed.includes(newStatus) || newStatus === currentStatus) {
+    logger.warn('Validation PATCH échouée', { 
+      id: order.id, 
+      recu: newStatus, 
+      actuel: currentStatus 
+    });
     return res.status(400).json({ 
       error: "Bad Request", 
-      message: "Statut invalide, manquant ou déjà appliqué" 
+      message: "Statut invalide, manquant ou identique au statut actuel" 
     });
   }
 
-  order.status = status;
+  order.status = newStatus;
   order.updatedAt = new Date().toISOString();
   
-  logger.info('Status updated', { id: order.id, status });
+  logger.info('Status updated successfully', { id: order.id, status: newStatus });
   res.json(order);
 });
 
