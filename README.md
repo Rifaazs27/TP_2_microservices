@@ -90,6 +90,8 @@ curl -X POST http://localhost:3000/orders \
 
 Le service Commande a calculé le total correct ($2599.98$) et a initialisé le statut à pending.
 
+---
+
 ###  Notifications 
 
 ```bash
@@ -98,6 +100,8 @@ curl -X GET http://localhost:3000/notifications?userId=user123
 **Réponse :**
 
 La notification a été générée instantanément suite à la commande. On remarque que l'orderId dans la notification correspond exactement à l'ID de la commande créée à l'étape précédente, validant la communication inter-services.
+
+---
 
 ###  Statistiques des Commandes ( Bonus )
 
@@ -108,6 +112,8 @@ curl -X GET http://localhost:3000/orders/stats
 **Réponse :**
 
 Le totalRevenue doit correspondre à la somme des commandes non annulées.
+
+---
 
 ###  Réservation de Stock ( Bonus )
 
