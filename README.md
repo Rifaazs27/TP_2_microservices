@@ -97,6 +97,7 @@ curl -X GET http://localhost:3000/notifications?userId=user123
 **Réponse :**
 
 La notification a été générée instantanément suite à la commande. On remarque que l'orderId dans la notification correspond exactement à l'ID de la commande créée à l'étape précédente, validant la communication inter-services.
+
 ---
 
 ### ❤️ Santé — Health Check
