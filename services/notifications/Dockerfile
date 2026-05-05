@@ -9,7 +9,7 @@ COPY . .
 FROM node:20-alpine AS runner
 WORKDIR /app
 COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/index.js ./
+COPY --from=builder /app/*.js ./ 
 RUN npm install --production
 EXPOSE 3004
 CMD ["node", "index.js"]
