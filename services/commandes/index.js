@@ -9,16 +9,16 @@ client.collectDefaultMetrics({ register });
 const httpRequestCounter = new client.Counter({
   name: 'http_requests_total',
   help: 'Total HTTP requests',
-  labelNames: ['method', 'route', 'status_code'],
+  labelNames: ['method', 'route', 'status_code', 'service'],
 });
 const httpRequestDuration = new client.Histogram({
   name: 'http_request_duration_seconds',
   help: 'Duration of HTTP requests',
-  labelNames: ['method', 'route', 'status_code'],
+  labelNames: ['method', 'route', 'status_code', 'service'],
 });
 const ordersGauge = new client.Gauge({
   name: 'devshop_orders_total_count',
-  help: 'Nombre total de commandes en mémoire',
+  help: 'Nombre total de commandes actives',
 });
 
 register.registerMetric(httpRequestCounter);
@@ -32,55 +32,84 @@ app.use((req, res, next) => {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {
     const route = req.route ? req.route.path : req.path;
-    httpRequestCounter.labels(req.method, route, res.statusCode).inc();
-    end({ method: req.method, route, status_code: res.statusCode });
+    httpRequestCounter.labels(req.method, route, res.statusCode, 'commandes').inc();
+    end({ method: req.method, route, status_code: res.statusCode, service: 'commandes' });
   });
   next();
 });
 
-app.use(express.json());
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
 let orders = [];
-let nextId = 1;
+
+// Fonction utilitaire pour notifier
+async function sendNotification(type, userId, orderId) {
+  try {
+    await fetch('http://notifications:3004/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, userId, orderId })
+    });
+  } catch (err) {
+    console.warn(`[commandes] notifications indisponible: ${err.message}`);
+  }
+}
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'commandes', total: orders.length }));
 
-app.get('/orders', (req, res) => {
+// --- ROUTES ---
+
+// GET /orders (supporte / via Gateway)
+app.get(['/orders', '/'], (req, res) => {
   res.json(orders);
 });
 
-app.post('/orders', (req, res) => {
-  const { items } = req.body;
-  if (!items || !items.length)
-    return res.status(400).json({ error: 'items requis et non vide' });
+// POST /orders -> Création avec ID formaté et Notification (Phase 2)
+app.post(['/orders', '/'], async (req, res) => {
+  const { userId, items, shippingAddress } = req.body;
 
-  const total = items.reduce((sum, i) => sum + i.price, 0);
+  if (!items || !items.length) {
+    return res.status(400).json({ error: 'items requis et non vide' });
+  }
+
+  const orderId = `order-${Date.now()}`;
+  const total = items.reduce((sum, i) => sum + (i.unitPrice * i.quantity || i.price || 0), 0);
+
   const order = {
-    id: nextId++,
+    id: orderId,
+    userId: userId || 'guest',
     items,
     total: Math.round(total * 100) / 100,
-    status: 'confirmée',
+    status: 'pending',
+    shippingAddress: shippingAddress || 'N/A',
     createdAt: new Date().toISOString(),
   };
+
   orders.push(order);
-  
   ordersGauge.set(orders.length);
   
-  // Appel async au service notifications (fire & forget)
-  fetch('http://notifications:3004/notify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderId: order.id, total: order.total }),
-  }).catch(err => console.warn('[commandes] notifications unreachable:', err.message));
+  // Notification asynchrone type "order_created"
+  sendNotification('order_created', order.userId, order.id);
 
   res.status(201).json(order);
+});
+
+// GET /orders/stats -> Pour le Dashboard (Phase 2)
+app.get('/orders/stats', (req, res) => {
+  const activeOrders = orders.filter(o => o.status !== 'cancelled');
+  const revenue = activeOrders.reduce((sum, o) => sum + o.total, 0);
+  
+  res.json({
+    totalCount: orders.length,
+    totalRevenue: Math.round(revenue * 100) / 100,
+    activeCount: activeOrders.length
+  });
 });
 
 app.get('/metrics', async (req, res) => {
@@ -89,4 +118,4 @@ app.get('/metrics', async (req, res) => {
 });
 
 const PORT = 3003;
-app.listen(PORT, () => console.log(`[commandes] http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(` [commandes] http://localhost:${PORT}`));
