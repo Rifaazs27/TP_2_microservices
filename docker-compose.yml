@@ -18,7 +18,7 @@ services:
       - "8080:80"
     networks:
       - devshop
-
+    restart: unless-stopped
   # ── Service Catalogue ─────────────────────────────────────────────
   catalogue:
     build: ./services/catalogue
@@ -26,12 +26,12 @@ services:
       - "3001:3001"
     networks:
       - devshop
-    # TODO : ajouter healthcheck
-    # healthcheck:
-    #   test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
-    #   interval: 10s
-    #   timeout: 3s
-    #   retries: 3
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   # ── Service Panier ────────────────────────────────────────────────
   panier:
@@ -40,8 +40,16 @@ services:
       - "3002:3002"
     networks:
       - devshop
-    # TODO : healthcheck + depends_on catalogue
-
+    depends_on:
+      catalogue:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    
   # ── Service Commandes ─────────────────────────────────────────────
   commandes:
     build: ./services/commandes
@@ -49,8 +57,16 @@ services:
       - "3003:3003"
     networks:
       - devshop
-    # TODO : healthcheck + depends_on panier
-
+    depends_on:
+      panier:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    
   # ── Service Notifications ─────────────────────────────────────────
   notifications:
     build: ./services/notifications
@@ -58,41 +74,44 @@ services:
       - "3004:3004"
     networks:
       - devshop
-    # TODO : healthcheck
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3004/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   # ── Prometheus ────────────────────────────────────────────────────
-  # TODO : décommenter et configurer
-  # prometheus:
-  #   image: prom/prometheus:latest
-  #   volumes:
-  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-  #   ports:
-  #     - "9090:9090"
-  #   networks:
-  #     - devshop
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - devshop
 
   # ── Grafana ───────────────────────────────────────────────────────
-  # TODO : décommenter et configurer
-  # grafana:
-  #   image: grafana/grafana:latest
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     - GF_AUTH_ANONYMOUS_ENABLED=true
-  #     - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-  #   networks:
-  #     - devshop
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    networks:
+      - devshop
 
   # ── Alertmanager ──────────────────────────────────────────────────
-  # TODO : décommenter et configurer
-  # alertmanager:
-  #   image: prom/alertmanager:latest
-  #   volumes:
-  #     - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
-  #   ports:
-  #     - "9093:9093"
-  #   networks:
-  #     - devshop
+  alertmanager:
+    image: prom/alertmanager:latest
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    ports:
+      - "9093:9093"
+    networks:
+      - devshop
+    restart: unless-stopped
 
 networks:
   devshop:
