@@ -24,7 +24,7 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS'); // Ajout PATCH
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -52,7 +52,6 @@ async function sendNotification(type, userId, orderId) {
   }
 }
 
-
 app.get('/health', (req, res) => {
   res.json({
     status: "ok",
@@ -70,7 +69,6 @@ app.get('/metrics', (req, res) => {
     revenue_total: revenue
   }));
 });
-
 
 app.get(['/orders/stats', '/stats'], (req, res) => {
   const totalRevenue = orders.reduce((acc, o) => acc + o.total, 0);
@@ -108,7 +106,8 @@ app.post(['/orders', '/'], async (req, res) => {
     total: Math.round(total * 100) / 100,
     status: 'pending',
     shippingAddress,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
 
   orders.push(order);
@@ -129,23 +128,34 @@ app.patch(['/orders/:id/status', '/:id/status'], (req, res) => {
   const { status } = req.body;
   const allowed = ['pending', 'confirmed', 'shipped', 'cancelled'];
   
-  if (!allowed.includes(status) || status === order.status) {
-    return res.status(400).json({ error: "Invalid status or no change" });
+  if (!status || !allowed.includes(status) || status === order.status) {
+    logger.warn('Invalid status update', { id: order.id, attempted: status });
+    return res.status(400).json({ 
+      error: "Bad Request", 
+      message: "Statut invalide, manquant ou déjà appliqué" 
+    });
   }
 
   order.status = status;
+  order.updatedAt = new Date().toISOString();
+  
+  logger.info('Status updated', { id: order.id, status });
   res.json(order);
 });
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not Found' });
 });
+
 app.use((err, req, res, next) => {
   logger.error('Unhandled error', { error: err.message });
   res.status(500).json({ error: 'Internal Server Error' });
 });
+
 const PORT = 3003;
-const server = app.listen(PORT, () => logger.info('Service started', { port: PORT }));
+const server = app.listen(PORT, () => {
+  logger.info('Service started', { port: PORT });
+});
 
 process.on('SIGTERM', () => {
   server.close(() => process.exit(0));
