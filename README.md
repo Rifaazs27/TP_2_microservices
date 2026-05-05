@@ -2,14 +2,14 @@
 
 ## 1. Membres de l'équipe
 
-* Zaafir [NOM]
+* Zaafir MOUGAMMADOU ZACCARIA
 
 ---
 
 ## 2. Architecture
 
 L'architecture est composée d'un point d'entrée unique (**API Gateway**) qui distribue les requêtes vers quatre services spécialisés.
-La communication entre services est **synchrone via HTTP**.
+La communication entre services est synchrone via HTTP.
 
 <img width="1005" height="701" alt="image" src="https://github.com/user-attachments/assets/6edd6048-5003-47f1-8fb8-ab79cac29dd2" />
 
@@ -20,21 +20,15 @@ La communication entre services est **synchrone via HTTP**.
 
 ### 🔹 Validation Manuelle Stricte
 
-* Implémentation de validateurs natifs (sans Joi/Zod)
-* ❌ Alternative rejetée : validation au niveau Gateway
-* ✅ Raison : chaque microservice doit garantir l'intégrité de ses données (**Fail Fast**)
-
+* J'ai écrit mes propres fonctions pour les logs et la sécurité (rate limit) au lieu d'installer des outils lourds. Pourquoi ? C'est plus léger, on contrôle tout le code et on respecte les contraintes du TP.
+  
 ### 🔹 Stockage In-Memory
 
-* Utilisation d'objets JavaScript globaux
-* ❌ Alternative rejetée : Redis / MongoDB
-* ✅ Raison : simplicité (TP court) + focus sur architecture
+Toutes les données (produits, paniers) sont stockées dans des variables simples. Pourquoi ? C'est ultra rapide à mettre en place et suffisant pour tester la communication entre les services sans gérer de base de données complexe.
 
 ### 🔹 Communication avec Retry & Backoff
 
-* Fonction custom de retry entre **Commandes → Notifications**
-* ❌ Alternative rejetée : appel simple
-* ✅ Raison : améliorer la fiabilité sans ajouter de broker
+Si le service de notification est temporairement indisponible, le service commande réessaie automatiquement 3 fois. Pourquoi ? Pour éviter qu'une commande échoue juste à cause d'un petit bug réseau passager.
 
 ---
 
@@ -103,29 +97,15 @@ curl http://localhost:3000/health
 
 ## 6. Difficultés rencontrées
 
-### 1. Priorité des routes Express
+1. Propagation du Signal SIGTERM : Lors de l'arrêt des conteneurs, les processus Node.js ne s'arrêtaient pas proprement tout de suite. Solution : Ajout d'un gestionnaire process.on('SIGTERM') pour fermer les connexions proprement (Graceful Shutdown) et utilisation d'images Alpine pour une meilleure gestion des signaux.
 
-* Problème : `/orders/:id` interceptait `/orders/stats`
-* ✅ Solution : déclarer les routes statiques **avant**
+2. Formatage strict des Logs : Au début, les logs s'affichaient sur une seule ligne ou en texte brut, ce qui rendait l'analyse difficile. Solution : Création d'un logger maison convertissant chaque message en objet JSON.stringify() pour qu'ils soient exploitables par des outils de monitoring.
 
-### 2. Types incohérents
+3. Calculs de précision (Float) : Les prix du panier (ex: 29.99 * 3) donnaient des résultats avec trop de décimales (ex: 89.9699999). Solution : Utilisation systématique de parseFloat(total.toFixed(2)) pour arrondir proprement les montants financiers.
 
-* Problème : nombres envoyés comme chaînes
-* ✅ Solution : `parseInt()` / `parseFloat()`
+4. Gestion des Timeouts dans le Health Check : Quand un service était arrêté (docker stop), le Gateway restait "bloqué" à attendre la réponse trop longtemps. Solution : Mise en place d'un AbortController (ou un timeout manuel) pour forcer l'échec de la requête après 2 secondes.
 
-### 3. Statut de commande
-
-* Problème : même statut accepté (200 au lieu de 400)
-* ✅ Solution :
-
-```js
-if (newStatus === order.status) return 400;
-```
-
-### 4. Timeout des health checks
-
-* Problème : un service down bloquait tout
-* ✅ Solution : `Promise.allSettled` + timeout (2s)
+5. Validation des payloads JSON : Recevoir des objets vides ou des types incorrects (chaîne au lieu de nombre) faisait planter les calculs de stock. Solution : Écriture d'un middleware de validation robuste qui vérifie chaque champ (typeof, isNaN, isEmpty) avant d'autoriser l'accès à la logique métier.
 
 ---
 
