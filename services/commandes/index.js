@@ -8,7 +8,6 @@ const app = express();
 app.use(express.json());
 app.use(metricsMiddleware);
 
-
 app.use((req, res, next) => {
   if (req.path === '/health' || req.path === '/metrics') return next();
   const start = Date.now();
@@ -25,7 +24,7 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS'); // Ajout PATCH
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -35,7 +34,6 @@ let orders = [];
 
 async function sendNotification(type, userId, orderId) {
   const url = 'http://notifications:3004/notify';
-  
   try {
     await withRetry(
       async () => {
@@ -44,140 +42,111 @@ async function sendNotification(type, userId, orderId) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type, userId, orderId })
         });
-        
-        if (!response.ok) {
-          throw new Error(`Notification service returned ${response.status}`);
-        }
-        
+        if (!response.ok) throw new Error(`Status ${response.status}`);
         logger.info('Notification sent', { orderId, userId });
       },
-      {
-        maxAttempts: 3,
-        baseDelayMs: 200,
-        onRetry: (attempt, delay, error) => 
-          logger.warn('Retrying notification', { attempt, delay_ms: Math.round(delay), error })
-      }
+      { maxAttempts: 3, baseDelayMs: 200 }
     );
   } catch (err) {
-    logger.error('External service call failed', { 
-      service: 'notifications', 
-      url: url, 
-      error: err.message 
-    });
+    logger.error('Notification failed', { error: err.message });
   }
 }
 
-app.get('/health', (req, res) => {
-  const used_mb = Math.round(process.memoryUsage().rss / 1024 / 1024 * 100) / 100;
-  const threshold_mb = 400;
-  const status = used_mb > threshold_mb ? "degraded" : "ok";
 
-  res.status(status === "ok" ? 200 : 503).json({
-    status,
+app.get('/health', (req, res) => {
+  res.json({
+    status: "ok",
     service: "commandes",
-    version: "1.0.0",
     uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    checks: {
-      memory: { status, used_mb, threshold_mb },
-      dataStore: { status: "ok", records: orders.length }
-    }
+    checks: { dataStore: { status: "ok", records: orders.length } }
   });
 });
 
 app.get('/metrics', (req, res) => {
-  const activeOrders = orders.filter(o => o.status !== 'cancelled');
-  const revenue = activeOrders.reduce((sum, o) => sum + o.total, 0);
-
+  const revenue = orders.reduce((sum, o) => sum + o.total, 0);
   res.set('Content-Type', 'text/plain; version=0.0.4');
   res.send(generateMetrics('commandes', {
     orders_total_count: orders.length,
-    revenue_total: Math.round(revenue * 100) / 100
+    revenue_total: revenue
   }));
 });
 
 
+app.get(['/orders/stats', '/stats'], (req, res) => {
+  const totalRevenue = orders.reduce((acc, o) => acc + o.total, 0);
+  const byStatus = orders.reduce((acc, o) => {
+    acc[o.status] = (acc[o.status] || 0) + 1;
+    return acc;
+  }, {});
+
+  res.json({
+    total: orders.length,
+    totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+    byStatus
+  });
+});
+
 app.get(['/orders', '/'], (req, res) => {
   const { userId } = req.query;
-  if (userId) {
-    return res.json(orders.filter(o => o.userId === userId));
-  }
-  res.json(orders);
+  const result = userId ? orders.filter(o => o.userId === userId) : orders;
+  res.json(result);
 });
 
-app.post(['/orders', '/'], async (req, res, next) => {
-  try {
-    const errors = validateOrder(req.body);
-
-    if (errors.length > 0) {
-      logger.warn('Validation failed', { errors });
-      return res.status(400).json({ error: 'Validation failed', details: errors });
-    }
-
-    const { userId, items, shippingAddress } = req.body;
-    const orderId = `order-${Date.now()}`;
-    const total = items.reduce((sum, i) => sum + (i.unitPrice * i.quantity || 0), 0);
-
-    const order = {
-      id: orderId,
-      userId,
-      items: items.map(i => ({ ...i, subtotal: Math.round((i.unitPrice * i.quantity) * 100) / 100 })),
-      total: Math.round(total * 100) / 100,
-      status: 'pending',
-      statusHistory: [{ status: 'pending', timestamp: new Date().toISOString() }],
-      shippingAddress,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    orders.push(order);
-    logger.info('Resource created', { id: orderId }); 
-
-    sendNotification('order_created', order.userId, order.id);
-
-    res.status(201).json(order);
-  } catch (err) {
-    next(err); 
+app.post(['/orders', '/'], async (req, res) => {
+  const errors = validateOrder(req.body);
+  if (errors.length > 0) {
+    return res.status(400).json({ error: 'Validation failed', details: errors });
   }
+
+  const { userId, items, shippingAddress } = req.body;
+  const total = items.reduce((sum, i) => sum + (i.unitPrice * i.quantity || 0), 0);
+  
+  const order = {
+    id: `order-${Date.now()}`,
+    userId,
+    items,
+    total: Math.round(total * 100) / 100,
+    status: 'pending',
+    shippingAddress,
+    createdAt: new Date().toISOString()
+  };
+
+  orders.push(order);
+  sendNotification('order_created', order.userId, order.id);
+  res.status(201).json(order);
 });
 
+app.get(['/orders/:id', '/:id'], (req, res) => {
+  const order = orders.find(o => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Not Found' });
+  res.json(order);
+});
+
+app.patch(['/orders/:id/status', '/:id/status'], (req, res) => {
+  const order = orders.find(o => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Not Found' });
+
+  const { status } = req.body;
+  const allowed = ['pending', 'confirmed', 'shipped', 'cancelled'];
+  
+  if (!allowed.includes(status) || status === order.status) {
+    return res.status(400).json({ error: "Invalid status or no change" });
+  }
+
+  order.status = status;
+  res.json(order);
+});
 
 app.use((req, res) => {
-  logger.warn('Route not found', { method: req.method, path: req.path });
-  res.status(404).json({
-    error: 'Not Found',
-    message: `La route ${req.method} ${req.path} n'existe pas`,
-  });
+  res.status(404).json({ error: 'Not Found' });
 });
-
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error', {
-    error: err.message,
-    path: req.path,
-    method: req.method,
-  });
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: 'Une erreur inattendue s\'est produite',
-    requestId: Date.now().toString(),
-  });
+  logger.error('Unhandled error', { error: err.message });
+  res.status(500).json({ error: 'Internal Server Error' });
 });
-
-
 const PORT = 3003;
-const server = app.listen(PORT, () => {
-  logger.info('Service started', { port: PORT });
-});
+const server = app.listen(PORT, () => logger.info('Service started', { port: PORT }));
 
 process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully...');
-  server.close(() => {
-    logger.info('Server closed — all connections drained');
-    process.exit(0);
-  });
-  
-  setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
-    process.exit(1);
-  }, 10000);
+  server.close(() => process.exit(0));
 });
