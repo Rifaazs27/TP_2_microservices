@@ -65,12 +65,18 @@ app.get('/health', (req, res) => res.json({ status: 'ok', service: 'commandes', 
 
 // --- ROUTES ---
 
-// GET /orders (supporte / via Gateway)
-app.get(['/orders', '/'], (req, res) => {
-  res.json(orders);
+
+app.get(['/orders/stats', '/stats'], (req, res) => {
+  const activeOrders = orders.filter(o => o.status !== 'cancelled');
+  const revenue = activeOrders.reduce((sum, o) => sum + o.total, 0);
+  
+  res.json({
+    totalCount: orders.length,
+    totalRevenue: Math.round(revenue * 100) / 100,
+    activeCount: activeOrders.length
+  });
 });
 
-// POST /orders -> Création avec ID formaté et Notification (Phase 2)
 app.post(['/orders', '/'], async (req, res) => {
   const { userId, items, shippingAddress } = req.body;
 
@@ -94,13 +100,11 @@ app.post(['/orders', '/'], async (req, res) => {
   orders.push(order);
   ordersGauge.set(orders.length);
   
-  // Notification asynchrone type "order_created"
   sendNotification('order_created', order.userId, order.id);
 
   res.status(201).json(order);
 });
 
-// GET /orders/stats -> Pour le Dashboard (Phase 2)
 app.get('/orders/stats', (req, res) => {
   const activeOrders = orders.filter(o => o.status !== 'cancelled');
   const revenue = activeOrders.reduce((sum, o) => sum + o.total, 0);
