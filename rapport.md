@@ -1,17 +1,17 @@
 **Q1.** La méthodologie **12-factor app** définit 12 principes pour les applications cloud-native. Listez les 12 facteurs et indiquez pour chacun si vous le respectez dans ce TP, et pourquoi.
 --> 
-Codebase
-Dependencies
-Config
-Backing services
-Build, release, run 
-Processes 
-Port binding
-Concurrency
-Disposability
-Dev/prod parity
-Logs
-Admin processes
+- Codebase
+- Dependencies
+- Config
+- Backing services
+- Build, release, run 
+- Processes 
+- Port binding
+- Concurrency
+- Disposability
+- Dev/prod parity
+- Logs
+- Admin processes
 
 **Q2.** En Kubernetes, un Pod a deux types de health checks : `livenessProbe` et `readinessProbe`. Quelle est la différence ? Lequel correspond à votre endpoint `/health` actuel ? Comment adapteriez-vous votre code pour exposer les deux séparément ?
 
