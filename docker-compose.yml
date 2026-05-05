@@ -16,6 +16,8 @@ services:
     build: ./services/gateway
     ports:
       - "3000:3000"
+    environment:
+      - SERVICE_NAME=gateway
     networks:
       - devshop
     depends_on:
@@ -43,6 +45,8 @@ services:
     build: ./services/catalogue
     ports:
       - "3001:3001"
+    environment:
+      - SERVICE_NAME=catalogue
     networks:
       - devshop
     healthcheck:
@@ -57,6 +61,8 @@ services:
     build: ./services/panier
     ports:
       - "3002:3002"
+    environment:
+      - SERVICE_NAME=panier  
     networks:
       - devshop
     depends_on:
@@ -74,6 +80,8 @@ services:
     build: ./services/commandes
     ports:
       - "3003:3003"
+    environment:
+      - SERVICE_NAME=commandes
     networks:
       - devshop
     depends_on:
@@ -91,6 +99,8 @@ services:
     build: ./services/notifications
     ports:
       - "3004:3004"
+    environment:
+      - SERVICE_NAME=notifications
     networks:
       - devshop
     healthcheck:
