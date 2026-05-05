@@ -20,23 +20,22 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 let notifications = [];
 
 app.get('/health', (req, res) => {
-  const used_mb = Math.round(process.memoryUsage().rss / 1024 / 1024 * 100) / 100;
-  const threshold_mb = 400;
-  const status = used_mb > threshold_mb ? "degraded" : "ok";
-
-  res.status(status === "ok" ? 200 : 503).json({
-    status,
+  res.json({
+    status: "ok",
     service: "notifications",
-    version: "1.0.0",
     uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    checks: {
-      memory: { status, used_mb, threshold_mb },
-      dataStore: { status: "ok", records: notifications.length }
-    }
+    checks: { dataStore: { records: notifications.length } }
   });
 });
 
@@ -45,12 +44,35 @@ app.get('/metrics', (req, res) => {
   res.send(generateMetrics('notifications', { sent_total: notifications.length }));
 });
 
-app.post('/notify', (req, res) => {
+app.get(['/notifications/stats', '/stats'], (req, res) => {
+  const byType = notifications.reduce((acc, n) => {
+    acc[n.type] = (acc[n.type] || 0) + 1;
+    return acc;
+  }, {});
+  
+  res.json({
+    total: notifications.length,
+    byType
+  });
+});
+
+app.get(['/notifications', '/'], (req, res) => {
+  const { userId } = req.query;
+  const result = userId ? notifications.filter(n => n.userId === userId) : notifications;
+  res.json(result);
+});
+
+app.post(['/notify', '/'], (req, res) => {
   const { type, userId, orderId } = req.body;
   
-  if (!type || !userId) {
-    logger.warn('Validation failed', { errors: ['type and userId are required'] });
-    return res.status(400).json({ error: "Validation failed" });
+  const allowedTypes = ['order_created', 'order_confirmed', 'stock_alert'];
+  
+  if (!type || !userId || !allowedTypes.includes(type)) {
+    logger.warn('Validation failed', { type, userId });
+    return res.status(400).json({ 
+      error: "Validation failed", 
+      message: "Type invalide ou manquant" 
+    });
   }
 
   const notif = { 
@@ -60,48 +82,25 @@ app.post('/notify', (req, res) => {
     orderId, 
     sentAt: new Date().toISOString() 
   };
-  notifications.push(notif);
   
-  logger.info('Email sent', { type, userId, id: notif.id });
+  notifications.push(notif);
+  logger.info('Notification created', { type, userId, id: notif.id });
   res.status(201).json(notif);
 });
 
 
 app.use((req, res) => {
-  logger.warn('Route not found', { method: req.method, path: req.path });
-  res.status(404).json({
-    error: 'Not Found',
-    message: `La route ${req.method} ${req.path} n'existe pas`,
-  });
+  res.status(404).json({ error: 'Not Found' });
 });
-
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error', {
-    error: err.message,
-    path: req.path,
-    method: req.method,
-  });
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: 'Une erreur inattendue s\'est produite',
-    requestId: Date.now().toString(),
-  });
+  logger.error('Unhandled error', { error: err.message });
+  res.status(500).json({ error: 'Internal Server Error' });
 });
-
-
 const PORT = 3004;
 const server = app.listen(PORT, () => {
   logger.info('Service started', { port: PORT });
 });
 
 process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully...');
-  server.close(() => {
-    logger.info('Server closed — all connections drained');
-    process.exit(0);
-  });
-  setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
-    process.exit(1);
-  }, 10000);
+  server.close(() => process.exit(0));
 });
