@@ -15,9 +15,16 @@ const SERVICES = {
   notifications: 'http://notifications:3004'
 };
 
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 app.use(rateLimiter);
 
-// Health Check Agrégé
 app.get('/health', async (req, res) => {
   const start = Date.now();
   const results = {};
@@ -26,7 +33,8 @@ app.get('/health', async (req, res) => {
     const sStart = Date.now();
     try {
       const resp = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
-      results[name] = { status: resp.ok ? 'ok' : 'down', responseTime: Date.now() - sStart };
+      const data = await resp.json();
+      results[name] = { status: 'ok', responseTime: Date.now() - sStart };
     } catch (err) {
       results[name] = { status: 'down', responseTime: null, error: err.code };
     }
@@ -41,12 +49,23 @@ app.get('/health', async (req, res) => {
     totalResponseTime: Date.now() - start
   });
 });
+app.all('/products*', (req, res) => {
+  proxy.web(req, res, { target: SERVICES.catalogue });
+});
+app.all('/cart*', (req, res) => {
+  proxy.web(req, res, { target: SERVICES.panier });
+});
+app.all('/orders*', (req, res) => {
+  proxy.web(req, res, { target: SERVICES.commandes });
+});
+app.all('/notifications*', (req, res) => {
+  proxy.web(req, res, { target: SERVICES.notifications });
+});
 
-// Proxying automatique vers les services
-app.use('/products', (req, res) => proxy.web(req, res, { target: SERVICES.catalogue }));
-app.use('/cart', (req, res) => proxy.web(req, res, { target: SERVICES.panier }));
-app.use('/orders', (req, res) => proxy.web(req, res, { target: SERVICES.commandes }));
-app.use('/notifications', (req, res) => proxy.web(req, res, { target: SERVICES.notifications }));
+proxy.on('error', (err, req, res) => {
+  console.error('Proxy Error:', err);
+  res.status(502).json({ error: 'Service temporairement indisponible' });
+});
 
 app.get('/metrics', async (req, res) => {
   res.set('Content-Type', register.contentType);
