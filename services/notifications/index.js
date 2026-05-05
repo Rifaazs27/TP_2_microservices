@@ -1,6 +1,6 @@
 const express = require('express');
 const logger = require('./logger');
-const { metricsMiddleware, generateMetrics } = require('./metrics');
+const { metricsMiddleware, generateMetrics } = require('./metrics'); 
 const app = express();
 
 app.use(express.json());
@@ -20,26 +20,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
-
 let notifications = [];
-
-const templates = {
-  order_created:   { subject: "Votre commande a été reçue",       message: (d) => `Votre commande #${d.orderId} a bien été enregistrée.` },
-  order_confirmed: { subject: "Commande confirmée",               message: (d) => `Votre commande #${d.orderId} est confirmée et en préparation.` },
-  order_shipped:   { subject: "Votre commande est en route",      message: (d) => `Votre commande #${d.orderId} a été expédiée !` },
-  order_delivered: { subject: "Commande livrée — Merci !",        message: (d) => `Votre commande #${d.orderId} a été livrée. Merci pour votre achat !` },
-  order_cancelled: { subject: "Commande annulée",                 message: (d) => `Votre commande #${d.orderId} a été annulée.` },
-  low_stock:       { subject: "Alerte stock faible",              message: (d) => `Alerte : le stock de ${d.productName} est faible (${d.stock} unités restantes).` },
-};
-
 
 app.get('/health', (req, res) => {
   const used_mb = Math.round(process.memoryUsage().rss / 1024 / 1024 * 100) / 100;
@@ -53,7 +34,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     checks: {
-      memory: { status: used_mb > threshold_mb ? "degraded" : "ok", used_mb, threshold_mb },
+      memory: { status, used_mb, threshold_mb },
       dataStore: { status: "ok", records: notifications.length }
     }
   });
@@ -61,93 +42,66 @@ app.get('/health', (req, res) => {
 
 app.get('/metrics', (req, res) => {
   res.set('Content-Type', 'text/plain; version=0.0.4');
-  res.send(generateMetrics('notifications', {
-    notifications_sent_total: notifications.length
-  }));
+  res.send(generateMetrics('notifications', { sent_total: notifications.length }));
 });
 
-
 app.post('/notify', (req, res) => {
-  const { type, userId, orderId, productName, stock } = req.body;
-  const template = templates[type];
-
-  if (!template) {
-    logger.warn('Validation failed', { errors: [`Unknown notification type: ${type}`] });
-    return res.status(400).json({ 
-        error: "Unknown notification type", 
-        validTypes: Object.keys(templates) 
-    });
+  const { type, userId, orderId } = req.body;
+  
+  if (!type || !userId) {
+    logger.warn('Validation failed', { errors: ['type and userId are required'] });
+    return res.status(400).json({ error: "Validation failed" });
   }
 
-  const notif = {
-    id: `notif-${Date.now()}`,
-    type,
-    userId,
-    orderId,
-    subject: template.subject,
-    message: template.message({ orderId, productName, stock }),
-    channel: 'email',
-    status: 'sent',
-    sentAt: new Date().toISOString(),
-    metadata: req.body.metadata || {}
+  const notif = { 
+    id: `notif-${Date.now()}`, 
+    type, 
+    userId, 
+    orderId, 
+    sentAt: new Date().toISOString() 
   };
-
   notifications.push(notif);
-
-  logger.info('Email sent', {
-    type,
-    userId,
-    subject: notif.subject
-  });
-
+  
+  logger.info('Email sent', { type, userId, id: notif.id });
   res.status(201).json(notif);
 });
 
-app.get(['/notifications', '/'], (req, res) => {
-  let filtered = [...notifications];
-  if (req.query.userId) filtered = filtered.filter(n => n.userId === req.query.userId);
-  if (req.query.type) filtered = filtered.filter(n => n.type === req.query.type);
-  
-  const limit = parseInt(req.query.limit) || 50;
-  const offset = parseInt(req.query.offset) || 0;
-  
-  res.json(filtered.slice(offset, offset + limit));
-});
 
-app.get('/notifications/stats', (req, res) => {
-  const now = Date.now();
-  const oneHourAgo = now - (3600 * 1000);
-  const twentyFourHoursAgo = now - (24 * 3600 * 1000);
-
-  const stats = {
-    total: notifications.length,
-    byType: {},
-    byStatus: { sent: notifications.filter(n => n.status === 'sent').length, failed: 0 },
-    recentActivity: {
-      last1h: notifications.filter(n => new Date(n.sentAt).getTime() > oneHourAgo).length,
-      last24h: notifications.filter(n => new Date(n.sentAt).getTime() > twentyFourHoursAgo).length
-    }
-  };
-
-  Object.keys(templates).forEach(t => {
-    stats.byType[t] = notifications.filter(n => n.type === t).length;
+app.use((req, res) => {
+  logger.warn('Route not found', { method: req.method, path: req.path });
+  res.status(404).json({
+    error: 'Not Found',
+    message: `La route ${req.method} ${req.path} n'existe pas`,
   });
-
-  res.json(stats);
 });
 
-app.delete('/notifications', (req, res) => {
-  notifications = [];
-  logger.info('Data store purged');
-  res.sendStatus(204);
+app.use((err, req, res, next) => {
+  logger.error('Unhandled error', {
+    error: err.message,
+    path: req.path,
+    method: req.method,
+  });
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: 'Une erreur inattendue s\'est produite',
+    requestId: Date.now().toString(),
+  });
 });
+
 
 const PORT = 3004;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info('Service started', { port: PORT });
 });
 
 process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down');
-  process.exit(0);
+  logger.info('SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    logger.info('Server closed — all connections drained');
+    process.exit(0);
+  });
+  setTimeout(() => {
+    logger.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
 });
