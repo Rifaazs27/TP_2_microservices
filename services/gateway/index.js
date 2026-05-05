@@ -15,6 +15,7 @@ const SERVICES = {
   notifications: 'http://notifications:3004'
 };
 
+// CORS
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
@@ -25,21 +26,19 @@ app.use((req, res, next) => {
 
 app.use(rateLimiter);
 
+// Health check agrégé (Phase 2)
 app.get('/health', async (req, res) => {
   const start = Date.now();
   const results = {};
-  
   await Promise.all(Object.entries(SERVICES).map(async ([name, url]) => {
     const sStart = Date.now();
     try {
-      const resp = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
-      const data = await resp.json();
+      await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
       results[name] = { status: 'ok', responseTime: Date.now() - sStart };
     } catch (err) {
       results[name] = { status: 'down', responseTime: null, error: err.code };
     }
   }));
-
   const isDegraded = Object.values(results).some(s => s.status === 'down');
   res.status(isDegraded ? 503 : 200).json({
     status: isDegraded ? 'degraded' : 'ok',
@@ -49,21 +48,14 @@ app.get('/health', async (req, res) => {
     totalResponseTime: Date.now() - start
   });
 });
-app.all('/products*', (req, res) => {
-  proxy.web(req, res, { target: SERVICES.catalogue });
-});
-app.all('/cart*', (req, res) => {
-  proxy.web(req, res, { target: SERVICES.panier });
-});
-app.all('/orders*', (req, res) => {
-  proxy.web(req, res, { target: SERVICES.commandes });
-});
-app.all('/notifications*', (req, res) => {
-  proxy.web(req, res, { target: SERVICES.notifications });
-});
+
+// Proxying (Utilisation de app.use pour la compatibilité)
+app.use('/products', (req, res) => proxy.web(req, res, { target: SERVICES.catalogue }));
+app.use('/cart', (req, res) => proxy.web(req, res, { target: SERVICES.panier }));
+app.use('/orders', (req, res) => proxy.web(req, res, { target: SERVICES.commandes }));
+app.use('/notifications', (req, res) => proxy.web(req, res, { target: SERVICES.notifications }));
 
 proxy.on('error', (err, req, res) => {
-  console.error('Proxy Error:', err);
   res.status(502).json({ error: 'Service temporairement indisponible' });
 });
 
@@ -72,4 +64,4 @@ app.get('/metrics', async (req, res) => {
   res.end(await register.metrics());
 });
 
-app.listen(3000, () => console.log('🚀 Gateway running on port 3000'));
+app.listen(3000, () => console.log(' Gateway running on port 3000'));
