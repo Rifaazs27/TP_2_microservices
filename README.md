@@ -53,38 +53,50 @@ docker compose down -v
 ### 📦 Catalogue — Liste des produits
 
 ```bash
-curl http://localhost:3000/products
+curl -X GET http://localhost:3000/products
 ```
 
 **Réponse :**
 
-```json
-200 OK
-[
-  { "id": 1, "name": "Laptop Pro 15" }
-]
-```
+Le catalogue retourne la liste complète des produits.
 
 ---
 
 ### 🛒 Panier — Ajouter un item
 
 ```bash
-curl -X POST http://localhost:3000/cart/user1/items \
--H "Content-Type: application/json" \
--d '{"productId":1, "quantity":2, "unitPrice":1299.99}'
+curl -X POST http://localhost:3000/cart/user123/items \
+     -H "Content-Type: application/json" \
+     -d '{"productId": 1, "quantity": 2, "unitPrice": 1299.99, "productName": "Laptop Pro 15"}'
 ```
+**Réponse :**
 
+Le panier a été créé avec succès et le itemCount reflète la quantité ajoutée.
 ---
 
 ### 📑 Commandes — Créer une commande
 
 ```bash
 curl -X POST http://localhost:3000/orders \
--H "Content-Type: application/json" \
--d '{"userId":"user1","items":[{"productId":1,"quantity":1,"unitPrice":1299.99}],"shippingAddress":"Paris"}'
+     -H "Content-Type: application/json" \
+     -d '{
+       "userId": "user123",
+       "items": [{"productId": 1, "quantity": 2, "unitPrice": 1299.99, "productName": "Laptop Pro 15"}],
+       "shippingAddress": "123 rue de la Paix, 75001 Paris"
+     }'
 ```
+**Réponse :**
 
+Le service Commande a calculé le total correct ($2599.98$) et a initialisé le statut à pending.
+
+### 📑 Notifications 
+
+```bash
+curl -X GET http://localhost:3000/notifications?userId=user123
+```
+**Réponse :**
+
+La notification a été générée instantanément suite à la commande. On remarque que l'orderId dans la notification correspond exactement à l'ID de la commande créée à l'étape précédente, validant la communication inter-services.
 ---
 
 ### ❤️ Santé — Health Check
