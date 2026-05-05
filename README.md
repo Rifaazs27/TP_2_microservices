@@ -72,6 +72,7 @@ curl -X POST http://localhost:3000/cart/user123/items \
 **Réponse :**
 
 Le panier a été créé avec succès et le itemCount reflète la quantité ajoutée.
+
 ---
 
 ###  Commandes — Créer une commande
