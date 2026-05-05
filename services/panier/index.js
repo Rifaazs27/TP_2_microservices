@@ -1,26 +1,33 @@
 const express = require('express');
-const client = require('prom-client');
+const logger = require('./logger');
+const { metricsMiddleware, generateMetrics } = require('./metrics');
 const app = express();
+
 app.use(express.json());
-
-const register = new client.Registry();
-client.collectDefaultMetrics({ register });
-
-const httpRequestCounter = new client.Counter({
-  name: 'http_requests_total',
-  help: 'Total HTTP requests',
-  labelNames: ['method', 'route', 'status_code', 'service'],
-});
+app.use(metricsMiddleware);
 
 app.use((req, res, next) => {
+  if (req.path === '/health' || req.path === '/metrics') return next();
+  const start = Date.now();
   res.on('finish', () => {
-    const route = req.route ? req.route.path : req.path;
-    httpRequestCounter.labels(req.method, route, res.statusCode, 'panier').inc();
+    logger.info('Request handled', {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration_ms: Date.now() - start,
+    });
   });
   next();
 });
 
-// Stockage Phase 2
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 let carts = {}; 
 
 const getOrCreateCart = (userId) => {
@@ -28,42 +35,69 @@ const getOrCreateCart = (userId) => {
     carts[userId] = { 
       userId, 
       items: [], 
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString() 
     };
   }
   return carts[userId];
 };
 
-app.get('/health', (req, res) => res.json({ status: 'ok', service: 'panier' }));
+app.get('/health', (req, res) => {
+  const used_mb = Math.round(process.memoryUsage().rss / 1024 / 1024 * 100) / 100;
+  const threshold_mb = 400;
+  const status = used_mb > threshold_mb ? "degraded" : "ok";
 
-// --- ROUTES FLEXIBLES (Phase 2) ---
-// On utilise un tableau de patterns pour accepter /cart/:userId ET /:userId
+  res.status(status === "ok" ? 200 : 503).json({
+    status,
+    service: "panier",
+    version: "1.0.0",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    checks: {
+      memory: { status: used_mb > threshold_mb ? "degraded" : "ok", used_mb, threshold_mb },
+      dataStore: { status: "ok", records: Object.keys(carts).length }
+    }
+  });
+});
+
+app.get('/metrics', (req, res) => {
+  res.set('Content-Type', 'text/plain; version=0.0.4');
+  res.send(generateMetrics('panier', {
+    carts_total: Object.keys(carts).length
+  }));
+});
+
 
 app.get(['/cart/:userId', '/:userId'], (req, res) => {
-  res.json(getOrCreateCart(req.params.userId));
+  const cart = getOrCreateCart(req.params.userId);
+  const total = cart.items.reduce((acc, i) => acc + (i.quantity * i.unitPrice), 0);
+  res.json({ ...cart, total: parseFloat(total.toFixed(2)) });
 });
 
 app.post(['/cart/:userId/items', '/:userId/items'], (req, res) => {
   const { productId, productName, quantity, unitPrice } = req.body;
   
-  if (!productId || !quantity) {
+  if (!productId || quantity === undefined) {
+    logger.warn('Validation failed', { errors: ["productId and quantity are required"] });
     return res.status(400).json({ error: "productId et quantity requis" });
   }
 
   const cart = getOrCreateCart(req.params.userId);
 
-  // LOGIQUE ANTI-DOUBLON
   const existingItem = cart.items.find(i => i.productId === productId);
   if (existingItem) {
     existingItem.quantity += quantity;
+    logger.info('Resource updated', { userId: cart.userId, productId, action: 'increment_quantity' });
   } else {
-    cart.items.push({ 
+    const newItem = { 
       itemId: Date.now().toString(), 
       productId, 
-      productName, 
+      productName: productName || "Produit inconnu", 
       quantity, 
       unitPrice: unitPrice || 0 
-    });
+    };
+    cart.items.push(newItem);
+    logger.info('Resource created', { userId: cart.userId, itemId: newItem.itemId });
   }
 
   cart.updatedAt = new Date().toISOString();
@@ -73,10 +107,12 @@ app.post(['/cart/:userId/items', '/:userId/items'], (req, res) => {
 app.get(['/cart/:userId/summary', '/:userId/summary'], (req, res) => {
   const cart = getOrCreateCart(req.params.userId);
   const total = cart.items.reduce((acc, item) => acc + (item.quantity * item.unitPrice), 0);
+  const itemCount = cart.items.reduce((acc, item) => acc + item.quantity, 0);
   
   res.json({
     userId: cart.userId,
-    itemCount: cart.items.reduce((acc, item) => acc + item.quantity, 0),
+    itemCount: itemCount,
+    uniqueProducts: cart.items.length,
     total: parseFloat(total.toFixed(2)),
     isEmpty: cart.items.length === 0
   });
@@ -88,12 +124,16 @@ app.delete(['/cart/:userId', '/:userId'], (req, res) => {
     items: [], 
     updatedAt: new Date().toISOString() 
   };
+  logger.info('Resource deleted', { userId: req.params.userId, action: 'clear_cart' });
   res.json(carts[req.params.userId]);
 });
 
-app.get('/metrics', async (req, res) => {
-  res.set('Content-Type', register.contentType);
-  res.end(await register.metrics());
+const PORT = 3002;
+app.listen(PORT, () => {
+  logger.info('Service started', { port: PORT });
 });
 
-app.listen(3002, () => console.log('🛒 Panier (Phase 2) sur port 3002'));
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down');
+  process.exit(0);
+});
