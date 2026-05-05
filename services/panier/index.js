@@ -6,7 +6,6 @@ const app = express();
 app.use(express.json());
 app.use(metricsMiddleware);
 
-// Middleware de Logging JSON
 app.use((req, res, next) => {
   if (req.path === '/health' || req.path === '/metrics') return next();
   const start = Date.now();
@@ -30,7 +29,6 @@ const getOrCreateCart = (userId) => {
   return carts[userId];
 };
 
-// --- ROUTES ---
 app.get('/health', (req, res) => {
   const used_mb = Math.round(process.memoryUsage().rss / 1024 / 1024 * 100) / 100;
   res.json({
@@ -44,7 +42,6 @@ app.get('/health', (req, res) => {
 app.post(['/cart/:userId/items', '/:userId/items'], (req, res) => {
   const { productId, quantity, unitPrice } = req.body;
   
-  // Validation simple Phase 4
   const errors = [];
   if (!productId) errors.push("productId: requis");
   if (!Number.isInteger(quantity) || quantity < 1) errors.push("quantity: doit être un entier >= 1");
@@ -65,7 +62,6 @@ app.post(['/cart/:userId/items', '/:userId/items'], (req, res) => {
   res.status(201).json(cart);
 });
 
-// --- GESTION ERREURS (4.3) ---
 app.use((req, res) => {
   logger.warn('Route not found', { method: req.method, path: req.path });
   res.status(404).json({ error: 'Not Found', message: `La route ${req.method} ${req.path} n'existe pas` });
@@ -76,7 +72,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error', requestId: Date.now().toString() });
 });
 
-// --- SHUTDOWN (4.4) ---
 const PORT = 3002;
 const server = app.listen(PORT, () => logger.info('Service started', { port: PORT }));
 
