@@ -5,9 +5,11 @@ COPY package*.json ./
 RUN npm install
 COPY . .
 
-# Étape 2 : Runtime
-FROM node:20-alpine
+# Étape 2 : Runtime (Image finale légère)
+FROM node:20-alpine AS runner
 WORKDIR /app
-COPY --from=builder /app ./
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/*.js ./ 
+RUN npm install --production
 EXPOSE 3000
 CMD ["node", "index.js"]
