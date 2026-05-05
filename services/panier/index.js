@@ -25,37 +25,55 @@ let carts = {};
 
 const getOrCreateCart = (userId) => {
   if (!carts[userId]) {
-    carts[userId] = { userId, items: [], updatedAt: new Date().toISOString() };
+    carts[userId] = { 
+      userId, 
+      items: [], 
+      updatedAt: new Date().toISOString() 
+    };
   }
   return carts[userId];
 };
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'panier' }));
 
-// Les routes incluent désormais "/cart" pour matcher la Gateway
-app.get('/cart/:userId', (req, res) => {
+// --- ROUTES FLEXIBLES (Phase 2) ---
+// On utilise un tableau de patterns pour accepter /cart/:userId ET /:userId
+
+app.get(['/cart/:userId', '/:userId'], (req, res) => {
   res.json(getOrCreateCart(req.params.userId));
 });
 
-app.post('/cart/:userId/items', (req, res) => {
+app.post(['/cart/:userId/items', '/:userId/items'], (req, res) => {
   const { productId, productName, quantity, unitPrice } = req.body;
+  
+  if (!productId || !quantity) {
+    return res.status(400).json({ error: "productId et quantity requis" });
+  }
+
   const cart = getOrCreateCart(req.params.userId);
 
-  // LOGIQUE ANTI-DOUBLON (Phase 2)
+  // LOGIQUE ANTI-DOUBLON
   const existingItem = cart.items.find(i => i.productId === productId);
   if (existingItem) {
     existingItem.quantity += quantity;
   } else {
-    cart.items.push({ itemId: Date.now().toString(), productId, productName, quantity, unitPrice });
+    cart.items.push({ 
+      itemId: Date.now().toString(), 
+      productId, 
+      productName, 
+      quantity, 
+      unitPrice: unitPrice || 0 
+    });
   }
 
   cart.updatedAt = new Date().toISOString();
   res.status(201).json(cart);
 });
 
-app.get('/cart/:userId/summary', (req, res) => {
+app.get(['/cart/:userId/summary', '/:userId/summary'], (req, res) => {
   const cart = getOrCreateCart(req.params.userId);
   const total = cart.items.reduce((acc, item) => acc + (item.quantity * item.unitPrice), 0);
+  
   res.json({
     userId: cart.userId,
     itemCount: cart.items.reduce((acc, item) => acc + item.quantity, 0),
@@ -64,8 +82,12 @@ app.get('/cart/:userId/summary', (req, res) => {
   });
 });
 
-app.delete('/cart/:userId', (req, res) => {
-  carts[req.params.userId] = { userId: req.params.userId, items: [], updatedAt: new Date().toISOString() };
+app.delete(['/cart/:userId', '/:userId'], (req, res) => {
+  carts[req.params.userId] = { 
+    userId: req.params.userId, 
+    items: [], 
+    updatedAt: new Date().toISOString() 
+  };
   res.json(carts[req.params.userId]);
 });
 
@@ -74,4 +96,4 @@ app.get('/metrics', async (req, res) => {
   res.end(await register.metrics());
 });
 
-app.listen(3002, () => console.log('Panier sur 3002'));
+app.listen(3002, () => console.log('🛒 Panier (Phase 2) sur port 3002'));
