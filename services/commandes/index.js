@@ -1,39 +1,21 @@
 const express = require('express');
-const client = require('prom-client');
+const logger = require('./logger');
+const { metricsMiddleware, generateMetrics } = require('./metrics');
 const app = express();
 
-// --- CONFIGURATION PROMETHEUS ---
-const register = new client.Registry();
-client.collectDefaultMetrics({ register });
-
-const httpRequestCounter = new client.Counter({
-  name: 'http_requests_total',
-  help: 'Total HTTP requests',
-  labelNames: ['method', 'route', 'status_code', 'service'],
-});
-const httpRequestDuration = new client.Histogram({
-  name: 'http_request_duration_seconds',
-  help: 'Duration of HTTP requests',
-  labelNames: ['method', 'route', 'status_code', 'service'],
-});
-const ordersGauge = new client.Gauge({
-  name: 'devshop_orders_total_count',
-  help: 'Nombre total de commandes actives',
-});
-
-register.registerMetric(httpRequestCounter);
-register.registerMetric(httpRequestDuration);
-register.registerMetric(ordersGauge);
-
 app.use(express.json());
+app.use(metricsMiddleware);
 
-// Middleware instrumentation
 app.use((req, res, next) => {
-  const end = httpRequestDuration.startTimer();
+  if (req.path === '/health' || req.path === '/metrics') return next();
+  const start = Date.now();
   res.on('finish', () => {
-    const route = req.route ? req.route.path : req.path;
-    httpRequestCounter.labels(req.method, route, res.statusCode, 'commandes').inc();
-    end({ method: req.method, route, status_code: res.statusCode, service: 'commandes' });
+    logger.info('Request handled', {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration_ms: Date.now() - start,
+    });
   });
   next();
 });
@@ -48,78 +30,128 @@ app.use((req, res, next) => {
 
 let orders = [];
 
-// Fonction utilitaire pour notifier
 async function sendNotification(type, userId, orderId) {
+  const url = 'http://notifications:3004/notify';
   try {
-    await fetch('http://notifications:3004/notify', {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, userId, orderId })
     });
+    if (response.ok) {
+      logger.info('Notification sent', { orderId, userId });
+    }
   } catch (err) {
-    console.warn(`[commandes] notifications indisponible: ${err.message}`);
+    logger.error('External service call failed', { 
+      service: 'notifications', 
+      url: url, 
+      error: err.message 
+    });
   }
 }
 
-app.get('/health', (req, res) => res.json({ status: 'ok', service: 'commandes', total: orders.length }));
 
-// --- ROUTES ---
+app.get('/health', (req, res) => {
+  const used_mb = Math.round(process.memoryUsage().rss / 1024 / 1024 * 100) / 100;
+  const threshold_mb = 400;
+  const status = used_mb > threshold_mb ? "degraded" : "ok";
 
+  res.status(status === "ok" ? 200 : 503).json({
+    status,
+    service: "commandes",
+    version: "1.0.0",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    checks: {
+      memory: { status: used_mb > threshold_mb ? "degraded" : "ok", used_mb, threshold_mb },
+      dataStore: { status: "ok", records: orders.length }
+    }
+  });
+});
 
-app.get(['/orders/stats', '/stats'], (req, res) => {
+app.get('/metrics', (req, res) => {
   const activeOrders = orders.filter(o => o.status !== 'cancelled');
   const revenue = activeOrders.reduce((sum, o) => sum + o.total, 0);
-  
-  res.json({
-    totalCount: orders.length,
-    totalRevenue: Math.round(revenue * 100) / 100,
-    activeCount: activeOrders.length
-  });
+
+  res.set('Content-Type', 'text/plain; version=0.0.4');
+  res.send(generateMetrics('commandes', {
+    orders_total_count: orders.length,
+    revenue_total: Math.round(revenue * 100) / 100
+  }));
+});
+
+
+app.get(['/orders', '/'], (req, res) => {
+  const { userId } = req.query;
+  if (userId) {
+    return res.json(orders.filter(o => o.userId === userId));
+  }
+  res.json(orders);
+});
+
+app.get(['/orders/stats', '/stats'], (req, res) => {
+  const stats = {
+    total: orders.length,
+    byStatus: {
+      pending: orders.filter(o => o.status === 'pending').length,
+      confirmed: orders.filter(o => o.status === 'confirmed').length,
+      shipped: orders.filter(o => o.status === 'shipped').length,
+      delivered: orders.filter(o => o.status === 'delivered').length,
+      cancelled: orders.filter(o => o.status === 'cancelled').length
+    },
+    totalRevenue: 0,
+    averageOrderValue: 0
+  };
+
+  const nonCancelled = orders.filter(o => o.status !== 'cancelled');
+  stats.totalRevenue = Math.round(nonCancelled.reduce((sum, o) => sum + o.total, 0) * 100) / 100;
+  stats.averageOrderValue = stats.totalRevenue > 0 ? Math.round((stats.totalRevenue / nonCancelled.length) * 100) / 100 : 0;
+
+  res.json(stats);
 });
 
 app.post(['/orders', '/'], async (req, res) => {
   const { userId, items, shippingAddress } = req.body;
 
-  if (!items || !items.length) {
-    return res.status(400).json({ error: 'items requis et non vide' });
+  let errors = [];
+  if (!userId) errors.push("userId non vide requis");
+  if (!items || items.length === 0) errors.push("items tableau non vide requis");
+  if (!shippingAddress) errors.push("shippingAddress non vide requis");
+
+  if (errors.length > 0) {
+    logger.warn('Validation failed', { errors });
+    return res.status(400).json({ error: 'Données de commande incomplètes', details: errors });
   }
 
   const orderId = `order-${Date.now()}`;
-  const total = items.reduce((sum, i) => sum + (i.unitPrice * i.quantity || i.price || 0), 0);
+  const total = items.reduce((sum, i) => sum + (i.unitPrice * i.quantity || 0), 0);
 
   const order = {
     id: orderId,
-    userId: userId || 'guest',
-    items,
+    userId,
+    items: items.map(i => ({ ...i, subtotal: Math.round((i.unitPrice * i.quantity) * 100) / 100 })),
     total: Math.round(total * 100) / 100,
     status: 'pending',
-    shippingAddress: shippingAddress || 'N/A',
+    statusHistory: [{ status: 'pending', timestamp: new Date().toISOString() }],
+    shippingAddress,
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
 
   orders.push(order);
-  ordersGauge.set(orders.length);
-  
+  logger.info('Resource created', { id: orderId }); 
+
   sendNotification('order_created', order.userId, order.id);
 
   res.status(201).json(order);
 });
 
-app.get('/orders/stats', (req, res) => {
-  const activeOrders = orders.filter(o => o.status !== 'cancelled');
-  const revenue = activeOrders.reduce((sum, o) => sum + o.total, 0);
-  
-  res.json({
-    totalCount: orders.length,
-    totalRevenue: Math.round(revenue * 100) / 100,
-    activeCount: activeOrders.length
-  });
-});
-
-app.get('/metrics', async (req, res) => {
-  res.set('Content-Type', register.contentType);
-  res.end(await register.metrics());
-});
-
 const PORT = 3003;
-app.listen(PORT, () => console.log(` [commandes] http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  logger.info('Service started', { port: PORT });
+});
+
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down');
+  process.exit(0);
+});
