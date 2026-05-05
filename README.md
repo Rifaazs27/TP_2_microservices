@@ -37,13 +37,13 @@ Si le service de notification est temporairement indisponible, le service comman
 ### ▶️ Build & démarrage
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 ### 🧹 Nettoyage
 
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
 ---
