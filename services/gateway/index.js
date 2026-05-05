@@ -1,9 +1,9 @@
 const express = require('express');
 const httpProxy = require('http-proxy');
-const logger = require('./logger'); 
-const { metricsMiddleware, generateMetrics } = require('./metrics'); 
-const { withRetry } = require('./retry'); 
 const { rateLimiter } = require('./rate-limiter');
+const logger = require('./logger'); // Import Phase 3
+const { metricsMiddleware, generateMetrics } = require('./metrics'); // Import Phase 3
+const { withRetry } = require('./retry'); // Import Phase 4.2
 
 const app = express();
 const proxy = httpProxy.createProxyServer();
@@ -15,10 +15,12 @@ const SERVICES = {
   notifications: 'http://notifications:3004'
 };
 
+const PORT = 3000;
 
+// --- MIDDLEWARES ---
 app.use(metricsMiddleware);
 
-
+// Middleware de Logging JSON
 app.use((req, res, next) => {
   if (req.path === '/health' || req.path === '/metrics') return next();
   const start = Date.now();
@@ -33,7 +35,7 @@ app.use((req, res, next) => {
   next();
 });
 
-
+// CORS
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
@@ -44,7 +46,9 @@ app.use((req, res, next) => {
 
 app.use(rateLimiter);
 
+// --- ROUTES ---
 
+// Health check agrégé avec Retry (Phase 4.2)
 app.get('/health', async (req, res) => {
   const start = Date.now();
   const results = {};
@@ -52,18 +56,18 @@ app.get('/health', async (req, res) => {
   await Promise.all(Object.entries(SERVICES).map(async ([name, url]) => {
     const sStart = Date.now();
     try {
-      await withRetry(
-        async () => {
-          const resp = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
-          if (!resp.ok) throw new Error(`Status ${resp.status}`);
-          return resp;
-        },
-        {
-          maxAttempts: 2, 
-          baseDelayMs: 100,
-          onRetry: (attempt, delay) => logger.warn(`Retrying healthcheck for ${name}`, { attempt, delay_ms: Math.round(delay) })
-        }
-      );
+      // Utilisation du withRetry pour le check de santé des services
+      await withRetry(async () => {
+        const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
+        if (!response.ok) throw new Error(`Status ${response.status}`);
+        return response;
+      }, {
+        maxAttempts: 3,
+        baseDelayMs: 200,
+        onRetry: (attempt, delay, error) => 
+          logger.warn(`Retrying health check for ${name}`, { attempt, delay_ms: Math.round(delay), error })
+      });
+
       results[name] = { status: 'ok', responseTime: Date.now() - sStart };
     } catch (err) {
       results[name] = { status: 'down', responseTime: null, error: err.message };
@@ -71,7 +75,6 @@ app.get('/health', async (req, res) => {
   }));
 
   const isDegraded = Object.values(results).some(s => s.status === 'down');
-  
   res.status(isDegraded ? 503 : 200).json({
     status: isDegraded ? 'degraded' : 'ok',
     gateway: 'ok',
@@ -81,6 +84,7 @@ app.get('/health', async (req, res) => {
   });
 });
 
+// Metrics manuelles (Phase 3)
 app.get('/metrics', (req, res) => {
   res.set('Content-Type', 'text/plain; version=0.0.4');
   res.send(generateMetrics('gateway'));
@@ -97,7 +101,9 @@ proxy.on('error', (err, req, res) => {
   res.status(502).json({ error: 'Service temporairement indisponible' });
 });
 
+// --- GESTION GLOBALE DES ERREURS (Phase 4.3) ---
 
+// Middleware 404 — route introuvable
 app.use((req, res) => {
   logger.warn('Route not found', { method: req.method, path: req.path });
   res.status(404).json({
@@ -106,6 +112,7 @@ app.use((req, res) => {
   });
 });
 
+// Middleware 500 — erreur non gérée
 app.use((err, req, res, next) => {
   logger.error('Unhandled error', {
     error: err.message,
@@ -114,25 +121,25 @@ app.use((err, req, res, next) => {
   });
   res.status(500).json({
     error: 'Internal Server Error',
-    message: 'Une erreur inattendue s\'est produite sur le Gateway',
+    message: 'Une erreur inattendue s\'est produite',
     requestId: Date.now().toString(),
   });
 });
 
+// --- GRACEFUL SHUTDOWN (Phase 4.4) ---
 
-const PORT = 3000;
 const server = app.listen(PORT, () => {
   logger.info('Gateway started', { port: PORT });
 });
 
 process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down Gateway gracefully...');
+  logger.info('SIGTERM received, shutting down gracefully...');
   server.close(() => {
-    logger.info('Gateway closed — all connections drained');
+    logger.info('Server closed — all connections drained');
     process.exit(0);
   });
   setTimeout(() => {
-    logger.error('Forced shutdown for Gateway after timeout');
+    logger.error('Forced shutdown after timeout');
     process.exit(1);
   }, 10000);
 });
